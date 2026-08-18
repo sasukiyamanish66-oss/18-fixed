@@ -1,0 +1,145 @@
+name: Build TEST MITRA APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build TEST MITRA APK
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ==========================================
+      # 1. CHECKOUT
+      # ==========================================
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+
+      # ==========================================
+      # 2. JAVA SETUP
+      # ==========================================
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+
+      # ==========================================
+      # 3. FIND AND EXTRACT ZIP
+      # ==========================================
+      - name: Extract Project ZIP
+        shell: bash
+        run: |
+          set -e
+
+          ZIP_FILE=$(find . -maxdepth 2 -type f -iname "*.zip" | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "❌ ZIP file not found"
+            exit 1
+          fi
+
+          echo "📦 ZIP found: $ZIP_FILE"
+
+          mkdir -p extracted
+
+          unzip -o "$ZIP_FILE" -d extracted
+
+          echo "📂 Extracted files:"
+          find extracted -maxdepth 2 -type f | head -100
+
+
+      # ==========================================
+      # 4. FIND AND PREPARE ANDROID PROJECT
+      # ==========================================
+      - name: Locate Android Project
+        shell: bash
+        run: |
+          set -e
+
+          PROJECT_DIR=""
+
+          if [ -f "extracted/gradlew" ]; then
+            PROJECT_DIR="extracted"
+          else
+            PROJECT_DIR=$(find extracted -type f -name "gradlew" -print -quit | xargs -r dirname)
+          fi
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "❌ gradlew not found"
+            echo "Project structure:"
+            find extracted -maxdepth 4 -type f | head -200
+            exit 1
+          fi
+
+          echo "ANDROID_PROJECT=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "✅ Android project:"
+          echo "$PROJECT_DIR"
+
+
+      # ==========================================
+      # 5. MAKE GRADLE WRAPPER EXECUTABLE
+      # ==========================================
+      - name: Prepare Gradle
+        run: |
+          chmod +x "$ANDROID_PROJECT/gradlew"
+
+
+      # ==========================================
+      # 6. BUILD DEBUG APK
+      # ==========================================
+      - name: Build APK
+        working-directory: ${{ env.ANDROID_PROJECT }}
+        run: |
+          ./gradlew clean assembleDebug --stacktrace
+
+
+      # ==========================================
+      # 7. FIND APK
+      # ==========================================
+      - name: Find APK
+        shell: bash
+        run: |
+          echo "🔎 Searching APK..."
+
+          find "$ANDROID_PROJECT" \
+            -type f \
+            -name "*.apk" \
+            -print
+
+          APK=$(find "$ANDROID_PROJECT" \
+            -type f \
+            -name "*debug*.apk" \
+            -print -quit)
+
+          if [ -z "$APK" ]; then
+            echo "❌ APK not found"
+            exit 1
+          fi
+
+          echo "APK_FILE=$APK" >> "$GITHUB_ENV"
+
+          echo "✅ APK found:"
+          echo "$APK"
+
+
+      # ==========================================
+      # 8. UPLOAD APK
+      # ==========================================
+      - name: Upload TEST MITRA APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: TEST-MITRA-APK
+          path: ${{ env.APK_FILE }}
+          if-no-files-found: error
+          retention-days: 30
